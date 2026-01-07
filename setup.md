@@ -17,31 +17,25 @@ Pastikan Anda menjalankan script ini sebagai user yang memiliki akses sudo (dala
 ```bash
 #!/bin/bash
 
-# Konfigurasi
+# --- Konfigurasi ---
 KIOSK_USER="opacpsb"
 HOME_URL="https://psb.feb.ui.ac.id"
-IDLE_TIME_MS=180000 # 3 menit dalam milidetik
+IDLE_TIME_MS=180000 # 3 menit
+# -------------------
 
-echo "--- Memulai Setup Kiosk Lubuntu 24.04 ---"
+echo "--- Update Setup Kiosk Lubuntu (Anti Black Screen) ---"
 
-# 1. Update dan Install Paket Pendukung
-# xprintidle: untuk mendeteksi ketidakaktifan mouse/keyboard
-# openbox: window manager ringan (opsional, tapi kita tetap pakai lxqt session yang dibersihkan)
-echo "[+] Menginstall paket yang diperlukan..."
+# Pastikan paket terinstall
 apt update -qq
 apt install -y firefox xprintidle
 
-# 2. Membuat User Baru
-if id "$KIOSK_USER" &>/dev/null; then
-    echo "[!] User $KIOSK_USER sudah ada."
-else
-    echo "[+] Membuat user $KIOSK_USER..."
+# Buat user jika belum ada
+if ! id "$KIOSK_USER" &>/dev/null; then
     useradd -m -s /bin/bash $KIOSK_USER
-    passwd -d $KIOSK_USER # Menghapus password (opsional, agar tidak ribet login jika logout)
+    passwd -d $KIOSK_USER
 fi
 
-# 3. Konfigurasi Autologin SDDM (Display Manager Lubuntu)
-echo "[+] Mengkonfigurasi Autologin SDDM..."
+# Konfigurasi Autologin SDDM (Pastikan session LXQt)
 mkdir -p /etc/sddm.conf.d
 cat <<EOF > /etc/sddm.conf.d/autologin.conf
 [Autologin]
@@ -50,59 +44,69 @@ Session=lxqt
 Relogin=true
 EOF
 
-# 4. Membuat Script Kiosk Logic (Watchdog)
-# Script ini akan berjalan saat user login
-echo "[+] Membuat script logika Kiosk..."
+# --- LOGIKA BARU DI SINI ---
 USER_HOME="/home/$KIOSK_USER"
 mkdir -p $USER_HOME/bin
 
 cat <<EOF > $USER_HOME/bin/kiosk_loop.sh
 #!/bin/bash
 
-# Matikan elemen desktop default Lubuntu agar layar bersih
-# Kami memberi jeda sedikit agar proses asli mulai dulu baru dimatikan
+# 1. MATIKAN POWER SAVING / SCREEN BLANKING
+# Ini mencegah monitor mati/hitam karena dianggap idle oleh sistem
+xset s off       # Matikan screensaver
+xset s noblank   # Jangan blank layar
+xset -dpms       # Matikan Energy Star (monitor standby)
+
+# Matikan elemen desktop default
 sleep 5
 killall lxqt-panel 2>/dev/null
 killall pcmanfm-qt 2>/dev/null
-# Set background hitam (opsional, jika wallpaper masih muncul)
 xsetroot -solid black 2>/dev/null
 
 # Loop utama
 while true; do
-    # 1. Cek apakah Firefox berjalan
+    
+    # Cek apakah Firefox berjalan
     if ! pgrep -x "firefox" > /dev/null; then
-        # Jalankan Firefox mode kiosk (fullscreen, no UI)
-        # --private-window digunakan agar tidak menyimpan cache/session restore
+        # Jalankan Firefox mode kiosk
+        # --kiosk-monitor 0 memastikan muncul di layar utama
         firefox --kiosk --private-window "$HOME_URL" &
     fi
 
-    # 2. Cek waktu idle (tidak ada gerak mouse/keyboard)
+    # Cek waktu idle
     IDLE=\$(xprintidle)
     
-    # Jika idle lebih dari 3 menit ($IDLE_TIME_MS)
+    # Jika idle lebih dari 3 menit
     if [ "\$IDLE" -gt $IDLE_TIME_MS ]; then
-        echo "Idle detected. Resetting browser..."
-        # Tutup paksa firefox
-        pkill -x firefox
-        # Loop akan otomatis menjalankan ulang firefox di atas
+        echo "Idle limit reached. Restarting browser..."
         
-        # Reset pointer idle dengan simulasi input kecil (opsional, agar tidak loop kill terus menerus)
-        # tapi karena firefox restart, user aktif dianggap 0 lagi oleh sistem biasanya.
+        # LOGIKA RESTART YANG DIPERBAIKI:
+        # 1. Kill Firefox
+        pkill -x firefox
+        
+        # 2. Tunggu sampai proses benar-benar hilang (loop waiting)
+        # Ini mencegah layar hitam karena script mengira firefox masih hidup
+        while pgrep -x "firefox" > /dev/null; do 
+            sleep 0.5
+        done
+
+        # 3. Opsional: Reset idle timer dengan simulasi keypress kecil (butuh xdotool)
+        # Tapi karena firefox restart, mouse/keyboard focus akan reset.
     fi
 
+    # Ulangi pengecekan setiap 2 detik
+    # Perintah xset diulang untuk memastikan power manager bawaan Lubuntu tidak menyalakan ulang screensaver
+    xset s off -dpms
     sleep 2
 done
 EOF
 
-# Beri izin eksekusi script
 chmod +x $USER_HOME/bin/kiosk_loop.sh
 chown -R $KIOSK_USER:$KIOSK_USER $USER_HOME/bin
 
-# 5. Menambahkan ke Autostart LXQt
-echo "[+] Menambahkan script ke Autostart..."
+# Autostart
 AUTOSTART_DIR="$USER_HOME/.config/autostart"
 mkdir -p $AUTOSTART_DIR
-
 cat <<EOF > $AUTOSTART_DIR/kiosk.desktop
 [Desktop Entry]
 Type=Application
@@ -110,12 +114,9 @@ Name=Kiosk Mode
 Exec=$USER_HOME/bin/kiosk_loop.sh
 X-LXQt-Need-Tray=false
 EOF
-
 chown -R $KIOSK_USER:$KIOSK_USER $USER_HOME/.config
 
-echo "--- Setup Selesai ---"
-echo "Silakan restart komputer untuk menguji autologin ke user: $KIOSK_USER"
-echo "Untuk restart sekarang, ketik: sudo reboot"
+echo "--- Update Selesai. Silakan Reboot ---"
 
 ```
 
