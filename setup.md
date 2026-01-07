@@ -18,7 +18,7 @@ Pastikan Anda menjalankan script ini sebagai user yang memiliki akses sudo (dala
 #!/bin/bash
 
 # --- Konfigurasi ---
-KIOSK_USER="opacpsb"
+KIOSK_USER="kiosku"
 HOME_URL="https://psb.feb.ui.ac.id"
 IDLE_TIME_MS=180000 # 3 menit
 # -------------------
