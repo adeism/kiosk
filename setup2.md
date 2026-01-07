@@ -1,64 +1,67 @@
-1. **Gateway** diubah menjadi `152.118.24.2`.
-2. **Waktu Idle** diubah menjadi **15 menit** (900.000 ms).
-3. **Penjelasan Dynamic IP** sudah disertakan dalam komentar script agar mudah dipahami.
+Berikut adalah **Script Final V3** dengan perubahan sesuai permintaan Anda:
 
-Silakan copy-paste script ini ke file baru (misal: `setup_kiosk_final_v2.sh`) dan jalankan dengan `sudo`.
+1. **Gateway:** Diubah ke `152.118.116.1`.
+2. **DNS:** Diubah ke `152.118.24.2` (Sepertinya ini DNS lokal UI).
+3. **Auto Shutdown:** Diset ke jam **16:00** (Jam 4 Sore).
+
+### Script: `setup_kiosk_opacku_v3.sh`
+
+Silakan copy, simpan, dan jalankan dengan `sudo`.
 
 ```bash
 #!/bin/bash
 
 # ==============================================================================
-# SCRIPT SETUP LUBUNTU 24.04 KIOSK (FINAL V2 - 15 MIN IDLE)
+# SCRIPT SETUP LUBUNTU 24.04 KIOSK (FINAL V3)
+# USER: opacku
 # ==============================================================================
 
 # --- [BAGIAN 1] KONFIGURASI (EDIT DI SINI) ---
 
-# >> KONFIGURASI JARINGAN <<
-# CARA UBAH KE DYNAMIC IP (DHCP):
-# Ubah nilai NET_MODE di bawah ini dari "static" menjadi "dynamic".
-# Contoh: NET_MODE="dynamic"
-# (Jika memilih "dynamic", settingan IP, Prefix, Gateway diabaikan otomatis)
+# >> A. JARINGAN
+NET_MODE="static"             # "static" atau "dynamic"
 
-NET_MODE="static"
-
-# Detail Static IP (Hanya terpakai jika NET_MODE="static"):
+# Detail IP (Hanya dipakai jika mode static)
 NET_IP="152.118.116.112"
-NET_PREFIX="24"               # Subnet mask /24
-NET_GATEWAY="152.118.24.2"    # <--- Gateway Baru
-NET_DNS="8.8.8.8, 1.1.1.1"    # DNS Google/Cloudflare
+NET_PREFIX="24"
+NET_GATEWAY="152.118.116.1"   # <--- Gateway Baru
+NET_DNS="152.118.24.2"        # <--- DNS Baru (Lokal)
 
-# >> KONFIGURASI KIOSK <<
-KIOSK_USER="opacpsb"
+# >> B. KIOSK SETTINGS
+KIOSK_USER="opacku"
 HOME_URL="https://psb.feb.ui.ac.id"
+IDLE_TIME_MINUTES=15          # Reset browser jika diam 15 menit
 
-# Waktu Idle sebelum restart browser (dalam milidetik)
-# Rumus: Menit x 60 x 1000
-# 15 Menit = 15 * 60 * 1000 = 900000
-IDLE_TIME_MS=900000           # <--- 15 Menit
+# >> C. SCHEDULED SHUTDOWN
+# Masukkan jam (format 24 jam) kapan PC harus mati.
+# "16" berarti tepat jam 16:00 (4 sore) PC akan shutdown.
+SHUTDOWN_HOUR="16"
 
 # ------------------------------------------------------------------------------
 
-# Cek Root
+# Hitung milidetik untuk idle
+IDLE_TIME_MS=$((IDLE_TIME_MINUTES * 60 * 1000))
+
 if [ "$EUID" -ne 0 ]; then
-  echo "ERROR: Harap jalankan script ini dengan sudo!"
+  echo "Harap jalankan dengan SUDO!"
   exit
 fi
 
-echo "--- [1/8] Mengkonfigurasi Jaringan ($NET_MODE) ---"
+echo "==================================================="
+echo " SETUP KIOSK 'opacku' V3 (Auto Shutdown 16:00)"
+echo "==================================================="
 
-# Mendeteksi nama interface network secara otomatis
+# --- [1/8] Setting Jaringan ---
+echo "[+] Konfigurasi Network: $NET_MODE"
 NET_INT=$(ip -o link show | awk -F': ' '{print $2}' | grep -v "lo" | head -n 1)
 
 if [ -z "$NET_INT" ]; then
-    echo "WARNING: Interface network tidak ditemukan! Melewati konfigurasi network."
+    echo "WARNING: LAN Card tidak terdeteksi!"
 else
-    echo "Interface terdeteksi: $NET_INT"
-    
-    # Hapus konfigurasi netplan lama agar bersih
     rm -f /etc/netplan/*.yaml
 
     if [ "$NET_MODE" == "static" ]; then
-        # === KONFIGURASI STATIC ===
+        # Config Static dengan DNS Baru
         cat <<EOF > /etc/netplan/01-netcfg.yaml
 network:
   version: 2
@@ -74,10 +77,9 @@ network:
       nameservers:
         addresses: [$NET_DNS]
 EOF
-        echo "Konfigurasi STATIC diterapkan: IP $NET_IP | GW $NET_GATEWAY"
-
+        echo "   IP: $NET_IP | GW: $NET_GATEWAY | DNS: $NET_DNS"
     else
-        # === KONFIGURASI DYNAMIC (DHCP) ===
+        # Config DHCP
         cat <<EOF > /etc/netplan/01-netcfg.yaml
 network:
   version: 2
@@ -86,25 +88,26 @@ network:
     $NET_INT:
       dhcp4: true
 EOF
-        echo "Konfigurasi DYNAMIC (DHCP) diterapkan."
     fi
 
-    # Terapkan Netplan
     chmod 600 /etc/netplan/01-netcfg.yaml
     netplan apply
-    sleep 5 # Tunggu koneksi refresh
+    sleep 3
 fi
 
-echo "--- [2/8] Mematikan Fitur Sleep & Suspend Sistem (Permanen) ---"
-# Mematikan sleep level kernel/systemd
+# --- [2/8] Sistem Hardening (Anti Sleep Total) ---
+echo "[+] Mematikan Sleep & Notifikasi..."
 systemctl mask sleep.target suspend.target hibernate.target hybrid-sleep.target
-# Mematikan sleep level user session
-gsettings set org.gnome.desktop.session idle-delay 0 2>/dev/null
-
-echo "--- [3/8] Membersihkan Notifikasi & Update Notifier ---"
 apt remove -y update-notifier update-notifier-common gnome-software-plugin-snap unattended-upgrades
+snap set system refresh.timer=03:00-05:00
 
-echo "--- [4/8] Mengkonfigurasi Firefox (No Updates/Popups) ---"
+# --- [3/8] Install Paket ---
+echo "[+] Install Firefox, xprintidle, unclutter..."
+apt update -qq
+apt install -y firefox xprintidle unclutter pulseaudio-utils
+
+# --- [4/8] Kebijakan Firefox ---
+echo "[+] Menerapkan Policy Firefox..."
 mkdir -p /etc/firefox/policies
 cat <<EOF > /etc/firefox/policies/policies.json
 {
@@ -126,21 +129,18 @@ cat <<EOF > /etc/firefox/policies/policies.json
   }
 }
 EOF
-# Geser jadwal update Snap ke jam 3 pagi (Maintenance Window)
-snap set system refresh.timer=03:00-05:00
 
-echo "--- [5/8] Install Paket & Membuat User ---"
-apt update -qq
-apt install -y firefox xprintidle
-
+# --- [5/8] User Setup ---
 if id "$KIOSK_USER" &>/dev/null; then
-    echo "User $KIOSK_USER sudah ada."
+    echo "[!] User $KIOSK_USER sudah ada."
 else
+    echo "[+] Membuat User $KIOSK_USER..."
     useradd -m -s /bin/bash $KIOSK_USER
     passwd -d $KIOSK_USER
+    usermod -aG audio $KIOSK_USER
 fi
 
-echo "--- [6/8] Konfigurasi Autologin SDDM ---"
+# --- [6/8] Autologin SDDM ---
 mkdir -p /etc/sddm.conf.d
 cat <<EOF > /etc/sddm.conf.d/autologin.conf
 [Autologin]
@@ -149,97 +149,97 @@ Session=lxqt
 Relogin=true
 EOF
 
-echo "--- [7/8] Membuat Logic Script (Watchdog 15 Menit) ---"
+# --- [7/8] Logic Script (Shutdown & Watchdog) ---
+echo "[+] Membuat Script Logic Kiosk..."
 USER_HOME="/home/$KIOSK_USER"
 mkdir -p $USER_HOME/bin
 
 cat <<EOF > $USER_HOME/bin/kiosk_loop.sh
 #!/bin/bash
 
-# === SETTING DISPLAY: PAKSA ON (ANTI-SLEEP) ===
+# VARIABEL
+LIMIT_IDLE=$IDLE_TIME_MS
+SHUTDOWN_AT="$SHUTDOWN_HOUR" # Jam 16
+
+# 1. SETUP TAMPILAN
 xset s off
 xset s noblank
 xset -dpms
-
-# === BERSIHKAN DESKTOP ===
 sleep 5
 killall lxqt-panel 2>/dev/null
 killall pcmanfm-qt 2>/dev/null
 killall lxqt-notificationd 2>/dev/null
 xsetroot -solid black 2>/dev/null
 
-# === LOOP UTAMA ===
+# Sembunyikan mouse idle 5 detik & Mute Audio
+unclutter -idle 5 &
+pactl set-sink-mute @DEFAULT_SINK@ 1 2>/dev/null
+
+# 2. LOOP UTAMA
 while true; do
     
-    # 1. Pastikan Firefox Hidup
+    # A. CEK SHUTDOWN (JAM 16:00 KE ATAS)
+    if [ ! -z "\$SHUTDOWN_AT" ]; then
+        CURRENT_HOUR=\$(date +%H)
+        # Jika jam sekarang >= 16 (dan bukan pagi buta misal jam 0-7, opsional logic)
+        # Di sini logikanya: Jika sudah masuk jam 16, 17, 18 dst -> MATI.
+        if [ "\$CURRENT_HOUR" -ge "\$SHUTDOWN_AT" ]; then
+             # Tambahan: Cek biar tidak mati pas baru nyala pagi (misal salah jam)
+             # Kita asumsi perpustakaan buka jam 8 pagi, jadi shutdown berlaku jam 16-23.
+             if [ "\$CURRENT_HOUR" -le 23 ]; then
+                echo "Jam Operasional Habis. Shutdown..."
+                poweroff
+             fi
+        fi
+    fi
+
+    # B. CEK FIREFOX
     if ! pgrep -x "firefox" > /dev/null; then
+        rm -rf /home/$KIOSK_USER/.cache/mozilla/firefox/* 2>/dev/null
         firefox --kiosk --private-window "$HOME_URL" &
     fi
 
-    # 2. Cek Idle Time
-    IDLE=\$(xprintidle)
-    
-    # Cek apakah idle melebihi batas waktu (IDLE_TIME_MS dari variabel setup)
-    # Nilai hardcode di sini disesuaikan dengan input script setup ($IDLE_TIME_MS)
-    if [ "\$IDLE" -gt $IDLE_TIME_MS ]; then
-        echo "Idle 15 menit tercapai. Restarting browser..."
+    # C. CEK IDLE
+    IDLE_NOW=\$(xprintidle)
+    if [ "\$IDLE_NOW" -gt \$LIMIT_IDLE ]; then
         pkill -x firefox
-        # Tunggu sampai benar-benar mati (cegah black screen)
-        while pgrep -x "firefox" > /dev/null; do 
-            sleep 0.5
-        done
+        while pgrep -x "firefox" > /dev/null; do sleep 0.5; done
     fi
 
-    # 3. REFRESH DISPLAY POWER (Agar layar tidak pernah mati)
+    # D. ANTI SLEEP
     xset s off -dpms
-    
-    sleep 2
+    sleep 5
 done
 EOF
 
 chmod +x $USER_HOME/bin/kiosk_loop.sh
 chown -R $KIOSK_USER:$KIOSK_USER $USER_HOME/bin
 
-echo "--- [8/8] Menambahkan ke Autostart ---"
+# --- [8/8] Autostart ---
 AUTOSTART_DIR="$USER_HOME/.config/autostart"
 mkdir -p $AUTOSTART_DIR
-
 cat <<EOF > $AUTOSTART_DIR/kiosk.desktop
 [Desktop Entry]
 Type=Application
-Name=Kiosk Mode
+Name=Kiosk
 Exec=$USER_HOME/bin/kiosk_loop.sh
 X-LXQt-Need-Tray=false
 EOF
-
 chown -R $KIOSK_USER:$KIOSK_USER $USER_HOME/.config
 
 echo "==================================================="
-echo " SETUP SELESAI (VERSI FINAL V2)"
-echo " Network Mode : $NET_MODE"
-echo " Gateway      : $NET_GATEWAY"
-echo " Idle Reset   : 15 Menit"
-echo " Silakan restart: sudo reboot"
+echo " SELESAI. Silakan Reboot: sudo reboot"
 echo "==================================================="
 
 ```
 
-### Panduan Mengubah ke Dynamic IP (DHCP)
+### Penjelasan Logika Shutdown:
 
-Untuk mengubah settingan ke DHCP di masa depan, Anda tidak perlu menulis ulang seluruh script Netplan manual. Cukup edit baris paling atas script ini:
+Dalam script di atas, saya menggunakan logika:
+`if [ "$CURRENT_HOUR" -ge 16 ]; then poweroff`
 
-**Cari baris:**
+Artinya:
 
-```bash
-NET_MODE="static"
-
-```
-
-**Ubah menjadi:**
-
-```bash
-NET_MODE="dynamic"
-
-```
-
-Lalu jalankan ulang scriptnya. Script akan mendeteksi perubahan variabel tersebut dan otomatis membuat konfigurasi Netplan yang menggunakan `dhcp4: true` serta mengabaikan isian IP/Gateway static di bawahnya.
+* Begitu jam sistem menunjukkan pukul **16:00, 16:01, ... sampai 23:59**, komputer akan otomatis menjalankan perintah `poweroff`.
+* Jika komputer dinyalakan kembali pada jam 16:30, ia akan hidup sebentar, script berjalan, mendeteksi jam >= 16, lalu mati lagi. Ini fitur keamanan agar tidak dipakai di luar jam kerja.
+* Komputer baru bisa dipakai normal besok pagi (misal jam 08:00) karena 08 lebih kecil dari 16.
